@@ -1,274 +1,425 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 
+const API_URL = "http://localhost:8080/students";
+
+const INITIAL_FORM = {
+  name: "",
+  email: "",
+  age: "",
+  course: "",
+};
+
 function App() {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [age, setAge] = useState("");
-  const [course, setCourse] = useState("");
-
   const [students, setStudents] = useState([]);
+  const [form, setForm] = useState({ ...INITIAL_FORM });
   const [editingId, setEditingId] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  // Get all students
-  const getStudents = async () => {
+  // Fetch all students
+  async function fetchStudents() {
     try {
-      const response = await fetch("http://localhost:8080/students");
+      const response = await fetch(API_URL);
+
+      if (!response.ok) {
+        throw new Error("Unable to load student records.");
+      }
+
       const data = await response.json();
       setStudents(data);
-    } catch (error) {
-      console.error(error);
-      alert("Cannot connect to the backend.");
+      setError("");
+    } catch (err) {
+      console.error("Fetch error:", err);
+      setError(
+        "Unable to connect to the backend. Make sure Spring Boot is running on port 8080."
+      );
+    } finally {
+      setLoading(false);
     }
-  };
+  }
+
+  useEffect(() => {
+    fetchStudents();
+  }, []);
+
+  // Update form fields
+  function handleChange(event) {
+    const { name, value } = event.target;
+
+    setForm((previousForm) => ({
+      ...previousForm,
+      [name]: value,
+    }));
+  }
+
+  // Reset form
+  function resetForm() {
+    setForm({ ...INITIAL_FORM });
+    setEditingId(null);
+  }
 
   // Add or update student
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError("");
 
-    if (Number(age) < 1 || Number(age) > 100) {
-  alert("Please enter a valid age between 1 and 100.");
-  return;
-}
+    const name = form.name.trim();
+    const email = form.email.trim();
+    const ageText = String(form.age).trim();
+    const course = form.course.trim();
+
+    if (!name || !email || !ageText || !course) {
+      setError("Please fill in all fields.");
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
+    if (!/^\d+$/.test(ageText)) {
+      setError("Please enter age as a whole number.");
+      return;
+    }
+
+    const age = Number(ageText);
+
+    if (!Number.isInteger(age) || age < 1 || age > 100) {
+      setError("Age must be between 1 and 100.");
+      return;
+    }
 
     const student = {
-      name: name,
-      email: email,
-      age: Number(age),
-      course: course
+      name,
+      email,
+      age,
+      course,
     };
 
     try {
-      let response;
+      setSaving(true);
 
-      if (editingId) {
-        response = await fetch(
-          `http://localhost:8080/students/${editingId}`,
-          {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(student)
-          }
+      const url = editingId
+        ? `${API_URL}/${editingId}`
+        : API_URL;
+
+      const response = await fetch(url, {
+        method: editingId ? "PUT" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(student),
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+
+        throw new Error(
+          message || `Request failed with status ${response.status}.`
         );
-      } else {
-        response = await fetch("http://localhost:8080/students", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(student)
-        });
       }
 
-      if (response.ok) {
-        alert(
-          editingId
-            ? "Student updated successfully!"
-            : "Student added successfully!"
-        );
-
-        clearForm();
-        getStudents();
-      } else {
-        alert("Operation failed.");
-      }
-    } catch (error) {
-      console.error(error);
-      alert("Cannot connect to the backend.");
+      resetForm();
+      await fetchStudents();
+    } catch (err) {
+      console.error("Save error:", err);
+      setError(
+        err.message || "Could not save the student. Please try again."
+      );
+    } finally {
+      setSaving(false);
     }
-  };
+  }
 
   // Edit student
-  const editStudent = (student) => {
+  function handleEdit(student) {
     setEditingId(student.id);
-    setName(student.name);
-    setEmail(student.email);
-    setAge(student.age);
-    setCourse(student.course);
-  };
+
+    setForm({
+      name: student.name ?? "",
+      email: student.email ?? "",
+      age: String(student.age ?? ""),
+      course: student.course ?? "",
+    });
+
+    setError("");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  }
 
   // Delete student
- const deleteStudent = async (id) => {
-  const confirmDelete = window.confirm(
-    "Are you sure you want to delete this student?"
-  );
-
-  if (!confirmDelete) {
-    return;
-  }
-
-  try {
-    const response = await fetch(
-      `http://localhost:8080/students/${id}`,
-      {
-        method: "DELETE"
-      }
+  async function handleDelete(id) {
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this student?"
     );
 
-    if (response.ok) {
-      alert("Student deleted successfully!");
-      getStudents();
-    } else {
-      alert("Failed to delete student.");
+    if (!confirmed) return;
+
+    try {
+      setError("");
+
+      const response = await fetch(`${API_URL}/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Delete failed with status ${response.status}.`);
+      }
+
+      await fetchStudents();
+    } catch (err) {
+      console.error("Delete error:", err);
+      setError(err.message || "Could not delete the student.");
     }
-  } catch (error) {
-    console.error(error);
-    alert("Cannot connect to the backend.");
   }
-};
 
-  // Clear form
-  const clearForm = () => {
-    setName("");
-    setEmail("");
-    setAge("");
-    setCourse("");
-    setEditingId(null);
-  };
-
-  // Load students
-  useEffect(() => {
-    getStudents();
-  }, []);
+  // Cancel editing
+  function cancelEdit() {
+    resetForm();
+    setError("");
+  }
 
   return (
-    <div className="container">
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-icon">S</span>
+          <span>
+            Student<span className="brand-light">Hub</span>
+          </span>
+        </div>
 
-      <h1>Student Management System</h1>
+        <span className="topbar-label">
+          STUDENT MANAGEMENT SYSTEM
+        </span>
+      </header>
 
-      {/* Student Form */}
-      <div className="form-card">
+      <main className="container">
+        <section className="hero">
+          <div>
+            <p className="eyebrow">STUDENT ADMINISTRATION</p>
 
-        <h2>
-          {editingId ? "Update Student" : "Add Student"}
-        </h2>
+            <h1>
+              Manage students <span>with ease.</span>
+            </h1>
 
-        <form onSubmit={handleSubmit}>
-
-          <div className="form-grid">
-
-            <input
-              type="text"
-              placeholder="Enter name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-
-            <input
-              type="email"
-              placeholder="Enter email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-
-            <input
-              type="number"
-              placeholder="Enter age"
-              value={age}
-              onChange={(e) => setAge(e.target.value)}
-              required
-            />
-
-            <input
-              type="text"
-              placeholder="Enter course"
-              value={course}
-              onChange={(e) => setCourse(e.target.value)}
-              required
-            />
-
+            <p className="hero-description">
+              Add, view, update and manage student records in one place.
+            </p>
           </div>
 
-          <div className="form-buttons">
+          <div className="hero-symbol">S</div>
+        </section>
 
-            <button
-              type="submit"
-              className="primary-btn"
-            >
-              {editingId ? "Update Student" : "Add Student"}
-            </button>
+        <section className="stats">
+          <div className="stat-card">
+            <span className="stat-label">TOTAL STUDENTS</span>
+            <strong>{students.length}</strong>
+            <span className="stat-note">Registered records</span>
+          </div>
 
-            {editingId && (
+          <div className="stat-card">
+            <span className="stat-label">SYSTEM STATUS</span>
+            <strong className="status-text">
+              {loading ? "Loading" : error ? "Check connection" : "Active"}
+            </strong>
+            <span className="stat-note">Student portal</span>
+          </div>
+        </section>
+
+        <section className="content-grid">
+          {/* Student form */}
+          <div className="panel form-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">STUDENT DETAILS</p>
+                <h2>{editingId ? "Update student" : "Add a student"}</h2>
+              </div>
+
+              <span className="heading-icon">＋</span>
+            </div>
+
+            <form onSubmit={handleSubmit}>
+              <label htmlFor="name">Full name</label>
+
+              <input
+                id="name"
+                name="name"
+                type="text"
+                placeholder="Enter student name"
+                value={form.name}
+                onChange={handleChange}
+                required
+              />
+
+              <label htmlFor="email">Email address</label>
+
+              <input
+                id="email"
+                name="email"
+                type="email"
+                placeholder="student@example.com"
+                value={form.email}
+                onChange={handleChange}
+                required
+              />
+
+              <div className="form-row">
+                <div>
+                  <label htmlFor="age">Age</label>
+
+                  <input
+                    id="age"
+                    name="age"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    placeholder="Enter age"
+                    value={form.age}
+                    onChange={(event) => {
+                      const value = event.target.value;
+
+                      setForm((previousForm) => ({
+                        ...previousForm,
+                        age: value,
+                      }));
+                    }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="course">Course</label>
+
+                  <input
+                    id="course"
+                    name="course"
+                    type="text"
+                    placeholder="e.g. CSE"
+                    value={form.course}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+              </div>
+
+              {error && (
+                <p className="error-message" role="alert">
+                  {error}
+                </p>
+              )}
+
               <button
-                type="button"
-                className="cancel-btn"
-                onClick={clearForm}
+                className="primary-button"
+                type="submit"
+                disabled={saving}
               >
-                Cancel
+                {saving
+                  ? "Saving..."
+                  : editingId
+                    ? "Update Student"
+                    : "＋ Add Student"}
               </button>
-            )}
 
+              {editingId && (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={cancelEdit}
+                >
+                  Cancel
+                </button>
+              )}
+            </form>
           </div>
 
-        </form>
-      </div>
+          {/* Student records */}
+          <div className="panel students-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">RECORDS DIRECTORY</p>
+                <h2>All students</h2>
+              </div>
 
-      {/* Student Table */}
-      <div className="table-card">
+              <span className="count-badge">
+                {students.length} records
+              </span>
+            </div>
 
-        <h2>Student List</h2>
+            {loading ? (
+              <p className="empty-state">Loading student records...</p>
+            ) : students.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">▤</div>
+                <h3>No students yet</h3>
+                <p>Add your first student using the form.</p>
+              </div>
+            ) : (
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>STUDENT</th>
+                      <th>AGE</th>
+                      <th>COURSE</th>
+                      <th>ACTIONS</th>
+                    </tr>
+                  </thead>
 
-        {students.length === 0 ? (
-          <p className="empty-message">
-            No students found.
-          </p>
-        ) : (
-          <table>
+                  <tbody>
+                    {students.map((student) => (
+                      <tr key={student.id}>
+                        <td>
+                          <div className="student-name">{student.name}</div>
+                          <div className="student-email">{student.email}</div>
+                        </td>
 
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Age</th>
-                <th>Course</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
+                        <td>{student.age}</td>
 
-            <tbody>
+                        <td>
+                          <span className="course-badge">
+                            {student.course}
+                          </span>
+                        </td>
 
-              {students.map((student) => (
-                <tr key={student.id}>
+                        <td>
+                          <div className="actions">
+                            <button
+                              className="edit-button"
+                              type="button"
+                              onClick={() => handleEdit(student)}
+                            >
+                              Edit
+                            </button>
 
-                  <td>{student.id}</td>
-                  <td>{student.name}</td>
-                  <td>{student.email}</td>
-                  <td>{student.age}</td>
-                  <td>{student.course}</td>
+                            <button
+                              className="delete-button"
+                              type="button"
+                              onClick={() => handleDelete(student.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
 
-                  <td>
-
-                    <button
-                      className="edit-btn"
-                      onClick={() => editStudent(student)}
-                    >
-                      Edit
-                    </button>
-
-                    <button
-                      className="delete-btn"
-                      onClick={() => deleteStudent(student.id)}
-                    >
-                      Delete
-                    </button>
-
-                  </td>
-
-                </tr>
-              ))}
-
-            </tbody>
-
-          </table>
-        )}
-
-      </div>
-
+        <footer>
+          StudentHub <span>·</span> Student records made simple
+        </footer>
+      </main>
     </div>
   );
 }
